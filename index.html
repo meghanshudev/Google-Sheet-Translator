@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Translator App</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #f4f4f4;
+            margin: 0;
+        }
+        .container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+            width: 90%;
+            max-width: 600px;
+        }
+        h1 {
+            text-align: center;
+        }
+        .translator {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+        .translator textarea {
+            width: 100%;
+            height: 150px;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            resize: none;
+        }
+        .controls {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+        .controls select {
+            padding: 8px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+        .controls button {
+            padding: 10px 20px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .controls button:hover {
+            background-color: #0056b3;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Translator</h1>
+        <div class="translator">
+            <textarea id="from-text" placeholder="Enter text"></textarea>
+            <textarea id="to-text" placeholder="Translation" readonly></textarea>
+        </div>
+        <div class="controls">
+            <select id="from-lang"></select>
+            <button id="translate-btn">Translate</button>
+            <select id="to-lang"></select>
+        </div>
+    </div>
+
+    <script>
+        const fromText = document.getElementById('from-text');
+        const toText = document.getElementById('to-text');
+        const fromLang = document.getElementById('from-lang');
+        const toLang = document.getElementById('to-lang');
+        const translateBtn = document.getElementById('translate-btn');
+
+        const languages = {
+            "en": "English",
+            "es": "Spanish",
+            "fr": "French",
+            "de": "German",
+            "it": "Italian",
+            "pt": "Portuguese",
+            "ru": "Russian",
+            "ja": "Japanese",
+            "ko": "Korean",
+            "zh-CN": "Chinese (Simplified)",
+            "ar": "Arabic",
+            "hi": "Hindi"
+        };
+
+        function populateLanguages() {
+            fromLang.innerHTML = '';
+            for (let code in languages) {
+                let option = `<option value="${code}">${languages[code]}</option>`;
+                fromLang.innerHTML += option;
+                toLang.innerHTML += option;
+            }
+        }
+
+        populateLanguages();
+
+        translateBtn.addEventListener('click', () => {
+            const text = fromText.value;
+            const sourceLang = fromLang.value;
+            const targetLang = toLang.value;
+            const maxChunkSize = 490; // A bit less than 500 to be safe
+
+            if (!text) return;
+            toText.value = '';
+            toText.setAttribute("placeholder", "Translating...");
+
+            if (text.length <= maxChunkSize) {
+                translateText(text, sourceLang, targetLang);
+            } else {
+                const chunks = splitText(text, maxChunkSize);
+                const promises = chunks.map(chunk => translateChunk(chunk, sourceLang, targetLang));
+
+                Promise.all(promises)
+                    .then(translatedChunks => {
+                        toText.value = translatedChunks.join('');
+                        toText.setAttribute("placeholder", "Translation");
+                    })
+                    .catch(error => {
+                        console.error('Translation error:', error);
+                        toText.value = error; // Display the specific error
+                        toText.setAttribute("placeholder", "Translation");
+                    });
+            }
+        });
+
+        function splitText(text, chunkSize) {
+            const chunks = [];
+            let i = 0;
+            while (i < text.length) {
+                chunks.push(text.slice(i, i + chunkSize));
+                i += chunkSize;
+            }
+            return chunks;
+        }
+
+        function translateChunk(chunk, sourceLang, targetLang) {
+            return new Promise((resolve, reject) => {
+                let apiUrl = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(chunk)}&langpair=${sourceLang}|${targetLang}`;
+
+                fetch(apiUrl)
+                    .then(res => res.json())
+                    .then(data => {
+                        if (data.responseStatus && data.responseStatus !== 200) {
+                            reject(data.responseDetails || 'API Error');
+                        } else if (data.responseData && data.responseData.translatedText) {
+                            const translated = data.responseData.translatedText;
+                            if (translated.startsWith("INVALID LANGUAGE PAIR")) {
+                                reject(translated); // Reject if the translation is an error message
+                            } else {
+                                resolve(translated);
+                            }
+                        } else {
+                            reject(data.responseDetails || "Unknown error");
+                        }
+                    })
+                    .catch(error => reject(error));
+            });
+        }
+
+        function translateText(text, sourceLang, targetLang) {
+            let apiUrl = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=${sourceLang}|${targetLang}`;
+
+            fetch(apiUrl)
+                .then(res => res.json())
+                .then(data => {
+                    if (data.responseStatus && data.responseStatus !== 200) {
+                        toText.value = data.responseDetails || 'API Error';
+                    } else if (data.responseData && data.responseData.translatedText) {
+                        toText.value = data.responseData.translatedText;
+                    } else {
+                        toText.value = data.responseDetails || "Error: Could not translate.";
+                    }
+                    toText.setAttribute("placeholder", "Translation");
+                });
+        }
+    </script>
+</body>
+</html>

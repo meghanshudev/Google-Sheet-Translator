@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <base target="_top">
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            padding: 10px;
+        }
+        #sheets-list {
+            margin-bottom: 10px;
+        }
+        #sheets-container {
+            border: 1px solid #ccc;
+            padding: 5px;
+            margin-top: 5px;
+            max-height: 100px;
+            overflow-y: auto;
+        }
+        textarea {
+            width: 100%;
+            height: 100px;
+            margin-bottom: 10px;
+            box-sizing: border-box;
+        }
+        select, button {
+            padding: 8px;
+            margin-bottom: 10px;
+        }
+        button {
+            width: 100%;
+            background-color: #4285f4;
+            color: white;
+            border: none;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #357ae8;
+        }
+    </style>
+</head>
+<body>
+    <div id="sheets-list">
+        <h4>Select Sheets</h4>
+        <label><input type="checkbox" id="select-all-sheets"> Select All</label>
+        <div id="sheets-container"></div>
+    </div>
+    <hr>
+    
+    <label for="from-lang">Translate From:</label>
+    <select id="from-lang" style="width: 100%;"></select>
+
+    <label for="to-lang">Translate To:</label>
+    <select id="to-lang" style="width: 100%;"></select>
+
+    <button id="translate-sheets-btn">Translate Selected Sheets</button>
+    
+    <div id="status" style="margin-top: 10px; text-align: center;"></div>
+
+    <script>
+        const fromLang = document.getElementById('from-lang');
+        const toLang = document.getElementById('to-lang');
+        const translateBtn = document.getElementById('translate-sheets-btn');
+        const statusDiv = document.getElementById('status');
+
+        const languages = {
+            "en": "English", "es": "Spanish", "fr": "French", "de": "German",
+            "it": "Italian", "pt": "Portuguese", "ru": "Russian", "ja": "Japanese",
+            "ko": "Korean", "zh-CN": "Chinese (Simplified)", "ar": "Arabic", "hi": "Hindi"
+        };
+
+        function populateLanguages() {
+            for (let code in languages) {
+                let option = `<option value="${code}">${languages[code]}</option>`;
+                fromLang.innerHTML += option;
+                toLang.innerHTML += option;
+            }
+            toLang.value = 'es'; // Default to Spanish
+        }
+
+        function loadSheetNames() {
+            google.script.run.withSuccessHandler(sheetNames => {
+                const container = document.getElementById('sheets-container');
+                const selectAllCheckbox = document.getElementById('select-all-sheets');
+                container.innerHTML = ''; // Clear previous list
+
+                sheetNames.forEach(name => {
+                    const checkbox = document.createElement('input');
+                    checkbox.type = 'checkbox';
+                    checkbox.id = name;
+                    checkbox.value = name;
+                    checkbox.className = 'sheet-checkbox';
+
+                    const label = document.createElement('label');
+                    label.htmlFor = name;
+                    label.appendChild(document.createTextNode(' ' + name));
+
+                    const div = document.createElement('div');
+                    div.appendChild(checkbox);
+                    div.appendChild(label);
+                    container.appendChild(div);
+                });
+
+                selectAllCheckbox.addEventListener('change', () => {
+                    const checkboxes = document.querySelectorAll('.sheet-checkbox');
+                    checkboxes.forEach(cb => {
+                        cb.checked = selectAllCheckbox.checked;
+                    });
+                });
+            }).getSheetNames();
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            populateLanguages();
+            loadSheetNames();
+        });
+
+        translateBtn.addEventListener('click', () => {
+            const selectedSheets = Array.from(document.querySelectorAll('.sheet-checkbox:checked')).map(cb => cb.value);
+            if (selectedSheets.length === 0) {
+                statusDiv.innerText = 'Please select at least one sheet.';
+                return;
+            }
+
+            translateBtn.disabled = true;
+            statusDiv.innerText = 'Starting translation...';
+
+            const sourceLang = fromLang.value;
+            const targetLang = toLang.value;
+            
+            // Process sheets one by one to avoid overwhelming the server
+            processSheet(selectedSheets, 0, sourceLang, targetLang);
+        });
+
+        function processSheet(sheetNames, index, sourceLang, targetLang) {
+            if (index >= sheetNames.length) {
+                statusDiv.innerText = 'All sheets translated successfully!';
+                translateBtn.disabled = false;
+                loadSheetNames(); // Refresh the list to show new sheets
+                return;
+            }
+
+            const sheetName = sheetNames[index];
+            statusDiv.innerText = `Fetching data from '${sheetName}'...`;
+
+            google.script.run
+                .withSuccessHandler(data => {
+                    translateDataInChunks(sheetName, data, sourceLang, targetLang, (nextSheet) => {
+                        processSheet(sheetNames, index + 1, sourceLang, targetLang);
+                    });
+                })
+                .withFailureHandler(handleError)
+                .getSheetData(sheetName);
+        }
+
+        function translateDataInChunks(sheetName, data, sourceLang, targetLang, callback) {
+            const chunkSize = 10; // Process 10 rows at a time
+            let translatedData = [];
+            let currentIndex = 0;
+
+            function processChunk() {
+                if (currentIndex >= data.length) {
+                    // All chunks are translated, now create the new sheet
+                    statusDiv.innerText = `Creating new sheet for '${sheetName}'...`;
+                    const newSheetName = sheetName + "_translated";
+                    google.script.run
+                        .withSuccessHandler(result => {
+                            statusDiv.innerText = `Sheet '${newSheetName}' created.`;
+                            callback(); // Move to the next sheet
+                        })
+                        .withFailureHandler(handleError)
+                        .createSheetWithData(newSheetName, translatedData);
+                    return;
+                }
+
+                statusDiv.innerText = `Translating rows ${currentIndex + 1}-${Math.min(currentIndex + chunkSize, data.length)} of '${sheetName}'...`;
+                const chunk = data.slice(currentIndex, currentIndex + chunkSize);
+
+                google.script.run
+                    .withSuccessHandler(translatedRows => {
+                        translatedData = translatedData.concat(translatedRows);
+                        currentIndex += chunkSize;
+                        processChunk(); // Process the next chunk
+                    })
+                    .withFailureHandler(handleError)
+                    .translateRows(chunk, sourceLang, targetLang);
+            }
+            
+            processChunk();
+        }
+
+        function handleError(error) {
+            statusDiv.innerText = 'Error: ' + error.message;
+            translateBtn.disabled = false;
+        }
+    </script>
+</body>
+</html>
