@@ -18,7 +18,7 @@ app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
 app.get('/', (req, res) => {
-  res.send('Hello from the backend!');
+  res.status(200).json({ message: 'Hello from the backend!' });
 });
 
 app.post('/auth/google', async (req, res) => {
